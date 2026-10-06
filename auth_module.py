@@ -1,6 +1,10 @@
 def authenticate(user):
     if isinstance(user, list):
-        user = user[0] if user else ""
+        if len(user) == 0:
+            raise TypeError("User list cannot be empty")
+        user = user[0]
+    
     if not isinstance(user, str):
-        raise TypeError("user must be a string or a list")
+        raise TypeError("User must be a string or a list containing a string")
+    
     return True
