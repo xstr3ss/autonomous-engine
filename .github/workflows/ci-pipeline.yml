@@ -1,0 +1,27 @@
+name: CI/CD Test Pipeline
+
+on: [push] # This triggers the pipeline every time you push code
+
+jobs:
+  run-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Run Python Tests (Simulated Failure)
+        id: test_suite
+        run: |
+          echo "Starting test suite..."
+          # We simulate a broken piece of code by writing an error to a log file and crashing
+          echo "ValueError: Expected a positive integer for user_id in database_sync.py" > error.log
+          echo "❌ Tests failed!"
+          exit 1
+
+      - name: Alert Autonomous Engine via Ngrok
+        if: failure() # This only runs if the step above crashes
+        run: |
+          ERROR_LOG=$(cat error.log)
+          curl -X POST "https://delicious-tint-karma.ngrok-free.dev/webhook" \
+          -H "Content-Type: application/json" \
+          -d "{\"repository\": \"${{ github.repository }}\", \"error_log\": \"$ERROR_LOG\", \"pr_number\": 99}"
