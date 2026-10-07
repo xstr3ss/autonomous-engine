@@ -1,6 +1,13 @@
 def authenticate(user):
     if isinstance(user, list):
-        user = user[0] if user else ""
+        if len(user) != 1:
+            raise TypeError("List must contain exactly one element")
+        user = user[0]
+    
     if not isinstance(user, str):
-        raise TypeError("user must be a string or a list")
-    return True
+        raise TypeError("Input must be a string or a list containing a single string")
+    
+    if user == "admin":
+        return True
+    
+    return False
