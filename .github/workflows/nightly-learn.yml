@@ -1,0 +1,38 @@
+name: Nightly Agent Learning
+
+on:
+  schedule:
+    - cron: '0 2 * * *' # Runs at 2:00 AM UTC every day
+  workflow_dispatch: # Allows you to trigger it manually via a button
+
+jobs:
+  learn:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Grants the bot permission to push changes
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Dependencies
+        run: |
+          pip install datasets PyGithub qdrant-client python-dotenv
+
+      - name: Run Knowledge Scrapers
+        env:
+          GITHUB_PAT: ${{ secrets.GITHUB_PAT }}
+        run: |
+          python hf_seeder.py
+          python github_scraper.py
+
+      - name: Commit Updated Vector Memory
+        run: |
+          git config --global user.name "Autonomous Learner"
+          git config --global user.email "bot@autonomous-engine.local"
+          git add qdrant_data/
+          git diff --quiet && git diff --staged --quiet || (git commit -m "🧠 auto: nightly vector memory expansion" && git push)
