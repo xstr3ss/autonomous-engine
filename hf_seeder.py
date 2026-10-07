@@ -13,7 +13,7 @@ points = []
 
 print("💉 [Hugging Face] Filtering and processing 50 base-level fixes...")
 # Grab the first 50 entries to establish a baseline without bloating storage
-for i in range(50):
+for i in range(40):
     row = dataset[i]
     # We map the dataset's 'instruction' to our error signature, and 'output' to the patch
     points.append(

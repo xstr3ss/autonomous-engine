@@ -23,7 +23,7 @@ points = []
 count = 0
 
 for pr in pulls:
-    if count >= 10: # Limit to 10 extreme real-world bugs for this run
+    if count >= 40: # Limit to 10 extreme real-world bugs for this run
         break
         
     # Check if the PR was actually merged and has a body description
