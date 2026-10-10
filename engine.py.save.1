@@ -1,0 +1,134 @@
+import os
+import re
+import json
+import glob
+import uuid
+from dotenv import load_dotenv
+from openai import OpenAI
+from groq import Groq
+from docker_sandbox import CodeSandbox
+from github_manager import GitHubManager
+
+load_dotenv()
+
+class SelfHealingEngine:
+    def __init__(self):
+        self.sandbox = CodeSandbox()
+        self.github = GitHubManager("xstr3ss/autonomous-engine")
+        
+        # Tier 2: Local Hardware (Ollama on CPU/RAM)
+        self.local_client = OpenAI(base_url="http://localhost:11434/v1", api_key="ollama")
+        
+        # Tier 3: Cloud Supercomputer (Groq API)
+        self.cloud_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+
+    def get_codebase_context(self):
+        context = ""
+        ignore_files = ["test_run.py", "dashboard.py", "hf_seeder.py", "github_scraper.py", "seed_memory.py", "engine.py", "auto_watcher.py", "export_dataset.py", "quant_seeder.py"]
+        for filepath in glob.glob("*.py"):
+            if filepath not in ignore_files:
+                with open(filepath, "r", encoding="utf-8") as f:
+                    context += f"\n\n--- FILE: {filepath} ---\n{f.read()}"
+        return context
+
+    def check_memory(self, error_message: str):
+        print("🔍 [Tier 1] Searching Qdrant vector bank...")
+        try:
+            from qdrant_client import QdrantClient
+            q_client = QdrantClient(path="./qdrant_data")
+            if not q_client.collection_exists("bug_fixes"): return None
+            
+            records, _ = q_client.scroll(collection_name="bug_fixes", limit=100)
+            q_client.close()
+            
+            for record in records:
+                if error_message[:40] in record.payload.get("error_signature", ""):
+                    print(f"⚡ [Tier 1] Known bug detected! Bypassing LLMs (0 Tokens).")
+                    return json.loads(record.payload["patch"])
+        except Exception:
+            pass
+        return None
+
+    def generate_patch(self, client, model_name, error_message: str, previous_patch: dict = None, docker_error: str = None) -> dict:
+        codebase = self.get_codebase_context()
+        prompt = f"Fix this code failing with the following error:\n{error_message}\n\nHere is the current codebase:\n{codebase}\n"
+        prompt += """
+You must return your response as a valid JSON object where keys are file paths and values are the ENTIRE new file content.
+RULES:
+1. Return ONLY valid JSON. Do not wrap in markdown formatting.
+2. Fix the Python code logically.
+                model=model_name,
+                temperature=0.1,
+                max_tokens=800
+            )
+            raw_output = response.choices[0].message.content.strip()
+            raw_output = re.sub(r"^```json\n", "", raw_output)
+            raw_output = re.sub(r"^```\n", "", raw_output)
+            raw_output = re.sub(r"\n```$", "", raw_output)
+            return json.loads(raw_output)
+        except Exception as e:
+            return {}
+
+    def resolve_error(self, error_message: str):
+        print(f"\n🚨 [Engine] Detected pipeline failure.")
+        
+        # --- TIER 1: MEMORY (Zero Cost, Instant) ---
+        files_dict = self.check_memory(error_message)
+        if files_dict:
+            success, output = self.sandbox.test_patch(files_dict)
+            if success:
+                print("✅ [Tier 1] Memorized fix verified!")
+                self.github.create_pull_request(files_dict, "fix: auto-applied from memory")
+                return True
+
+        # --- TIER 2: LOCAL OLLAMA (Zero Cost, Slow on CPU) ---
+        print(f"\n🐢 [Tier 2] Asking Local hardware (Ollama) to generate a fix...")
+        files_dict = self.generate_patch(self.local_client, "qwen2.5-coder:7b", error_message)
+        local_patch, local_error = None, None
+        
+        if files_dict:
+            print(f"🧪 [CI/CD] Forwarding Local fix to Sandbox...")
+            success, output = self.sandbox.test_patch(files_dict)
+            if success:
+                print(f"✅ [Tier 2] Local model successfully healed the code!")
+                self.save_to_memory(error_message, files_dict)
+                self.github.create_pull_request(files_dict, "fix: local model resolution")
+                return True
+            else:
+                print(f"❌ [Tier 2] Local Sandbox failed! Escalating to Cloud...")
+                local_patch = files_dict
+                local_error = output
+        else:
+            print(f"❌ [Tier 2] Local model failed to generate valid JSON.")
+
+        # --- TIER 3: GROQ CLOUD (API Tokens, Instant) ---
+        print(f"\n🚀 [Tier 3] Waking up Groq Supercomputer (Escalation)...")
+        files_dict = self.generate_patch(self.cloud_client, "qwen/qwen3.8-27b", error_message, local_patch, local_error)
+        
+        if files_dict:
+            success, output = self.sandbox.test_patch(files_dict)
+            if success:
+                print(f"✅ [Tier 3] Cloud model successfully healed the complex code!")
+                self.save_to_memory(error_message, files_dict)
+                self.github.create_pull_request(files_dict, "fix: cloud model resolution")
+                return True
+            else:
+                print(f"❌ [Tier 3] Cloud Sandbox failed! Bug requires manual intervention.")
+        
+        return False
+
+    def save_to_memory(self, error, patch):
+        try:
+            from qdrant_client import QdrantClient
+            from qdrant_client.models import PointStruct
+            q_client = QdrantClient(path="./qdrant_data")
+            q_client.upsert("bug_fixes", points=[PointStruct(id=uuid.uuid4().hex, vector=[0.0]*384, payload={"error_signature": error, "patch": json.dumps(patch)})])
+            q_client.close()
+        except Exception:
+            pass
+
+    def shutdown(self):
+        pass
+
+if __name__ == "__main__":
+    pass

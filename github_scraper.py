@@ -1,51 +1,105 @@
+import requests
+import json
 import os
 import uuid
-import json
-from github import Github
 from dotenv import load_dotenv
 from qdrant_client import QdrantClient
 from qdrant_client.models import PointStruct
 
 load_dotenv()
+CHECKPOINT_FILE = "scraper_checkpoint.json"
 
-print("🌐 [GitHub] Connecting to real-world repositories...")
-g = Github(os.getenv("GITHUB_PAT"))
-client = QdrantClient(path="./qdrant_data")
+DEFAULT_REPOS = [
+    "psf/requests",
+    "pallets/flask",
+    "urllib3/urllib3",
+    "pallets/click",
+    "bottlepy/bottle"
+]
 
-# Target a highly active Python repository
-repo = g.get_repo("pallets/flask")
-print(f"🔍 [GitHub] Scanning {repo.full_name} for resolved bugs...")
+def load_checkpoint():
+    if os.path.exists(CHECKPOINT_FILE):
+        with open(CHECKPOINT_FILE, "r") as f:
+            return json.load(f)
+    return {
+        "repos": DEFAULT_REPOS,
+        "current_repo_idx": 0,
+        "current_page": 1
+    }
 
-# Search for closed PRs that fixed bugs
-pulls = repo.get_pulls(state='closed', sort='created', direction='desc')
+def save_checkpoint(state):
+    with open(CHECKPOINT_FILE, "w") as f:
+        json.dump(state, f)
 
-points = []
-count = 0
-
-for pr in pulls:
-    if count >= 40: # Limit to 10 extreme real-world bugs for this run
-        break
+def scrape_and_store():
+    state = load_checkpoint()
+    q_client = QdrantClient(path="./qdrant_data")
+    
+    headers = {"Accept": "application/vnd.github.v3+json"}
+    if os.getenv("GITHUB_TOKEN"):
+        headers["Authorization"] = f"Bearer {os.getenv('GITHUB_TOKEN')}"
         
-    # Check if the PR was actually merged and has a body description
-    if pr.merged and pr.body:
-        print(f"   -> Memorizing PR #{pr.number}: {pr.title}")
+    repos = state.get("repos", DEFAULT_REPOS)
+    
+    print("🚀 [Scraper] Continuous extraction initialized. Trusting merged PRs...")
+    
+    while state["current_repo_idx"] < len(repos):
+        repo = repos[state["current_repo_idx"]]
+        page = state["current_page"]
         
-        # In a full production script, you would use pr.get_files() to get the exact diffs.
-        # For memory efficiency, we summarize the fix.
-        points.append(
-            PointStruct(
-                id=uuid.uuid4().hex,
-                vector=[0.0] * 384,
-                payload={
-                    "error_signature": f"{pr.title}\n{pr.body[:200]}...",
-                    "patch": json.dumps({"framework_patch.py": "Real-world logic derived from PR diffs applied here."})
-                }
-            )
-        )
-        count += 1
+        print(f"\n📡 [Scraper] Fetching {repo} (Page {page})...")
+        url = f"https://api.github.com/repos/{repo}/pulls?state=closed&per_page=50&page={page}"
+        response = requests.get(url, headers=headers)
+        
+        if response.status_code in [403, 429]:
+            print("⚠️ [Scraper] Rate limit hit. Checkpoint saved. Run again later to resume.")
+            break
+            
+        if response.status_code != 200:
+            state["current_repo_idx"] += 1
+            state["current_page"] = 1
+            save_checkpoint(state)
+            continue
+            
+        prs = response.json()
+        if not prs:
+            print(f"✅ [Scraper] Reached end of PRs for {repo}.")
+            state["current_repo_idx"] += 1
+            state["current_page"] = 1
+            save_checkpoint(state)
+            continue
+            
+        for pr in prs:
+            # Only process successfully merged pull requests
+            if not pr.get("body") or not pr.get("merged_at"):
+                continue
+            
+            error_sig = f"{pr.get('title', '')}\n{pr.get('body', '')[:300]}"
+            patch_resp = requests.get(pr["patch_url"], headers=headers)
+            
+            if patch_resp.status_code == 200:
+                patch_text = patch_resp.text[:1500]
+                
+                print(f"✅ [Memory] PR #{pr['number']} verified by origin repo. Injecting into Qdrant...")
+                q_client.upsert(
+                    collection_name="bug_fixes",
+                    points=[
+                        PointStruct(
+                            id=uuid.uuid4().hex,
+                            vector=[0.0] * 384,
+                            payload={
+                                "error_signature": error_sig,
+                                "patch": patch_text
+                            }
+                        )
+                    ]
+                )
 
-if points:
-    client.upsert(collection_name="bug_fixes", points=points)
-    print(f"✅ [GitHub] {count} extreme real-world fixes injected into Qdrant!")
+        state["current_page"] += 1
+        save_checkpoint(state)
 
-client.close()
+    q_client.close()
+    print("\n🛑 [Scraper] Run complete or paused. Checkpoint updated.")
+
+if __name__ == "__main__":
+    scrape_and_store()

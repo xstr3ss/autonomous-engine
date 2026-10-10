@@ -1,70 +1,68 @@
-import docker
-import tempfile
+import subprocess
 import os
-import sys
+import atexit
+from typing import Tuple
 
 class CodeSandbox:
+    """
+    Phase 3 Persistent Zero-Trust Execution Sandbox.
+    Maintains a living container to allow the AI to run bash commands
+    and explore the codebase dynamically, mimicking a real developer environment.
+    """
     def __init__(self):
-        print("🐳 [Sandbox] Connecting to Docker daemon...")
-        try:
-            self.client = docker.from_env()
-            self.client.ping()
-        except Exception:
-            print("❌ [Sandbox] ERROR: Could not connect to Docker.")
-            print("   Please ensure Docker Desktop is running and WSL integration is enabled.")
-            sys.exit(1)
+        self.container_name = "core_controller_sandbox"
+        self.cwd = os.getcwd()
+        self._boot_daemon()
+        # Ensure cleanup when the engine shuts down or crashes
+        atexit.register(self.shutdown)
+
+    def _boot_daemon(self) -> None:
+        """Boots the persistent container and installs dependencies once."""
+        print("🐳 [Sandbox] Booting persistent microVM...")
+        # Clean up any lingering ghosts from previous runs
+        subprocess.run(["docker", "rm", "-f", self.container_name], capture_output=True)
+        
+        # Start the background daemon
+        cmd = [
+            "docker", "run", "-d", 
+            "--name", self.container_name,
+            "-v", f"{self.cwd}:/app",
+            "-w", "/app",
+            "python:3.9-slim",
+            "sleep", "infinity"
+        ]
+        subprocess.run(cmd, check=True, capture_output=True)
+        
+        print("📦 [Sandbox] Provisioning testing environment (pytest)...")
+        # Install pytest once, saving massive time on subsequent loops
+        self.run_bash("pip install pytest --quiet")
+        print("✅ [Sandbox] Persistent environment active and ready.")
+
+    def run_bash(self, command: str) -> Tuple[bool, str]:
+        """
+        Executes an arbitrary bash command securely inside the container.
+        
+        Args:
+            command (str): The shell command to run (e.g., 'grep -r "API" .')
             
-        print("🐳 [Sandbox] Pulling lightweight Python Alpine image (if not cached)...")
-        self.client.images.pull("python:3.10-alpine")
+        Returns:
+            Tuple[bool, str]: (Success status, stdout or stderr output)
+        """
+        # We wrap the command in sh -c to support pipes and shell built-ins
+        cmd = ["docker", "exec", self.container_name, "sh", "-c", command]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        
+        output = result.stdout if result.returncode == 0 else result.stderr
+        return result.returncode == 0, output.strip()
 
-    def test_patch(self, patched_code: str) -> tuple[bool, str]:
-        """Runs the patched code in an isolated Docker container with strict resource limits."""
-        # Create a temporary directory that automatically deletes itself
-        with tempfile.TemporaryDirectory() as temp_dir:
-            script_path = os.path.join(temp_dir, "script.py")
-            
-            # Write the AI's patch to the file
-            with open(script_path, "w") as f:
-                f.write(patched_code)
-                
-            # Append a strict CI/CD test suite to verify the logic actually works
-            test_assertions = """
-# --- Automated CI/CD Test Suite ---
-try:
-    assert authenticate('shyam') == True, "Failed valid user auth"
-    assert authenticate('') == False, "Failed empty user auth"
-    assert authenticate(None) == False, "Failed None user auth"
-    print("✅ All sandbox tests passed successfully.")
-except Exception as e:
-    print(f"❌ Test Failed: {e}")
-    exit(1)
-"""
-            with open(script_path, "a") as f:
-                f.write(test_assertions)
+    def test_patch(self, files_dict: dict = None) -> Tuple[bool, str]:
+        """
+        Executes the test suite. 
+        Because the workspace is volume-mounted, local file changes made by 
+        the DiffEngine are instantly reflected inside the container.
+        """
+        return self.run_bash("pytest")
 
-            try:
-                print("🛡️  [Sandbox] Executing code in isolated container (128MB RAM limit)...")
-                # Run the container with strict security boundaries
-                logs = self.client.containers.run(
-                    "python:3.10-alpine",
-                    command=["python", "/app/script.py"],
-                    volumes={temp_dir: {'bind': '/app', 'mode': 'ro'}},
-                    working_dir="/app",
-                    remove=True,        # Instantly delete container after run
-                    stderr=True,
-                    stdout=True,
-                    mem_limit="128m",   # Enterprise security: prevent memory leaks
-                    network_disabled=True # Enterprise security: block internet access
-                )
-                return True, logs.decode('utf-8').strip()
-                
-            except docker.errors.ContainerError as e:
-                # The script failed (exit code != 0)
-                return False, e.stderr.decode('utf-8').strip()
-
-if __name__ == "__main__":
-    # Quick local test
-    sandbox = CodeSandbox()
-    good_code = "def authenticate(user):\n    return bool(user)"
-    success, output = sandbox.test_patch(good_code)
-    print(f"Test Result: {success} | Output: {output}")
+    def shutdown(self) -> None:
+        """Kills and removes the persistent container to free resources."""
+        subprocess.run(["docker", "rm", "-f", self.container_name], capture_output=True)

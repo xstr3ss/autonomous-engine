@@ -1,5 +1,5 @@
-import uuid
 import os
+import uuid
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams, PointStruct
 from sentence_transformers import SentenceTransformer
@@ -9,6 +9,13 @@ class BugResolutionStore:
         self.collection_name = collection_name
         self.storage_path = storage_path
         
+        lock_file = os.path.join(self.storage_path, '.lock')
+        if os.path.exists(lock_file):
+            try:
+                os.remove(lock_file)
+                print('🧹 [Memory] Auto-cleared zombie database lock!')
+            except:
+                pass
         os.makedirs(self.storage_path, exist_ok=True)
         self.client = QdrantClient(path=self.storage_path)
         
