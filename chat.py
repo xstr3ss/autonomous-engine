@@ -2,16 +2,12 @@ import os
 import requests
 from rich.console import Console
 from rich.panel import Panel
-from engine import SelfHealingEngine
-from orchestrator import InstitutionalOrchestrator
 from dotenv import load_dotenv
 
 load_dotenv()
 console = Console()
-engine = SelfHealingEngine()
 groq_api_key = os.getenv("GROQ_API_KEY")
 
-# Strict constants to prevent URL string corruption
 URL_MODELS = "https://api.groq.com/openai/v1/models"
 URL_CHAT = "https://api.groq.com/openai/v1/chat/completions"
 
@@ -31,23 +27,21 @@ def get_valid_model() -> str:
     except Exception:
         return "openai/gpt-oss-20b"
 
-ACTIVE_MODEL = get_valid_model()
-planner = InstitutionalOrchestrator(model_name=ACTIVE_MODEL)
-
 class AgenticOrchestrator:
-    def __init__(self):
+    def __init__(self, model_name):
+        self.model = model_name
         self.memory = [
-            {"role": "system", "content": "You are Fable, an institutional autonomous software and quantitative intelligence engine. Keep conversational replies clear and concise."}
+            {"role": "system", "content": "You are Fable, an institutional autonomous software engine. Keep conversational replies clear and concise."}
         ]
 
     def route_intent(self, user_input: str) -> str:
         prompt = f"""Analyze input: "{user_input}"
-Determine if this requires file modifications, code execution, or quantitative research.
+Determine if this requires file modifications, code execution, or project generation.
 Respond with exactly one word: ACTION or CHAT."""
         
         headers = {"Authorization": f"Bearer {groq_api_key}", "Content-Type": "application/json"}
         payload = {
-            "model": ACTIVE_MODEL,
+            "model": self.model,
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0.0
         }
@@ -62,7 +56,7 @@ Respond with exactly one word: ACTION or CHAT."""
         self.memory.append({"role": "user", "content": user_input})
         headers = {"Authorization": f"Bearer {groq_api_key}", "Content-Type": "application/json"}
         payload = {
-            "model": ACTIVE_MODEL,
+            "model": self.model,
             "messages": self.memory
         }
         try:
@@ -78,14 +72,27 @@ Respond with exactly one word: ACTION or CHAT."""
             return f"Error: {e}"
 
 def run_chat():
+    console.print("\n[bold yellow]⚡ Booting Fable OS...[/]")
+    
+    console.print("[cyan]1. Discovering Groq API Models...[/]")
+    ACTIVE_MODEL = get_valid_model()
+    
+    console.print("[cyan]2. Loading Autonomous Worker Engine (Qdrant & AST)...[/]")
+    from engine import SelfHealingEngine
+    from orchestrator import InstitutionalOrchestrator
+    
+    engine = SelfHealingEngine()
+    planner = InstitutionalOrchestrator(model_name=ACTIVE_MODEL)
+    orchestrator = AgenticOrchestrator(model_name=ACTIVE_MODEL)
+    
+    # Removed the screen-clear bug so you can see your loading logs!
+
     console.print(Panel(
         f"[bold white]FABLE ENTERPRISE ORCHESTRATOR[/]\n"
         f"[cyan]Active Brain:[/] {ACTIVE_MODEL}\n"
         f"[dim]AST Splicing: Enabled | Hierarchical Planning: Active[/]",
         border_style="cyan"
     ))
-
-    orchestrator = AgenticOrchestrator()
 
     while True:
         try:
@@ -106,7 +113,7 @@ def run_chat():
                 engine.resolve_error(user_input)
                 orchestrator.memory.append({
                     "role": "system",
-                    "content": f"System log: Executed plan for task: '{user_input}'. Verification and Git commits recorded."
+                    "content": f"System log: Executed task: '{user_input}'."
                 })
             else:
                 response = orchestrator.conversational_reply(user_input)
