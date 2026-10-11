@@ -33,7 +33,13 @@ class WorkspaceGraph:
         self.collection_name = "workspace_graph"
         # Using a fast, local, zero-cost embedding model
         self.encoder = SentenceTransformer("all-MiniLM-L6-v2")
-        self.client = QdrantClient(path=db_path)
+        import shutil
+        try:
+            self.client = QdrantClient(path=db_path)
+        except Exception as e:
+            print(f"🧹 [Context Graph] Phantom database lock detected! Auto-wiping...")
+            shutil.rmtree(db_path, ignore_errors=True)
+            self.client = QdrantClient(path=db_path)
         self.parser = Tier0Parser()
         self._initialize_schema()
 

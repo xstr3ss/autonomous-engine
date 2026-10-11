@@ -9,7 +9,6 @@ from rich.panel import Panel
 console = Console()
 
 def print_banner():
-    # A sleek, minimalist, unbreakable header
     console.print(Panel(
         "[bold white]CORE CONTROLLER[/]\n[cyan]Fable Architecture v1.0.0[/]\n[dim]Autonomous Code Repair Engine[/]", 
         border_style="cyan", 
@@ -40,7 +39,7 @@ def init():
     subprocess.run([sys.executable, "repo_indexer.py"], capture_output=True)
     console.print("   ✅ [green]Context Graph Indexed.[/]")
     
-    console.print("\n🎉 [bold green]System Ready. Run 'python cli.py watch' to ignite the engine.[/]\n")
+    console.print("\n🎉 [bold green]System Ready. Run 'python cli.py watch' or 'python cli.py chat'.[/]\n")
 
 @click.command()
 def watch():
@@ -67,9 +66,17 @@ def fix(filepath):
     engine = SelfHealingEngine()
     engine.resolve_error(f"Manual override triggered for {filepath}. Find the bug and patch it.")
 
+@click.command()
+def chat():
+    """💬 Start an interactive conversation with the AI agent"""
+    import subprocess
+    subprocess.run([sys.executable, "chat.py"])
+
+# Register commands
 cli.add_command(init)
 cli.add_command(watch)
 cli.add_command(fix)
+cli.add_command(chat)
 
 if __name__ == '__main__':
     cli()

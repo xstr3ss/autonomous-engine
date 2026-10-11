@@ -1,2 +1,4 @@
-cryptography
-requests
+yfinance
+pandas
+numpy
+pytest
