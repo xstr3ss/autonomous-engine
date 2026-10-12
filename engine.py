@@ -6,18 +6,20 @@ from docker_sandbox import run_tests
 from memory import VectorMemory
 from critic import CriticAgent
 from git_ops import GitManager
+from explorer import WorkspaceExplorer  # 🚨 NEW
 
 logging.basicConfig(level=logging.INFO, format="%(message)s", force=True)
 log = logging.getLogger("fable.engine")
 
 class SelfHealingEngine:
     def __init__(self):
-        log.info("🚨 [Engine] Initializing Modular Multi-Agent Engine...")
+        log.info("🚨 [Engine] Initializing Autonomous Multi-Agent Engine...")
         self.cfg = Config()
         self.llm = LLMClient(self.cfg)
         self.memory = VectorMemory()
         self.critic = CriticAgent(self.llm)
         self.git = GitManager()
+        self.explorer = WorkspaceExplorer(self.llm)  # 🚨 NEW
 
     def _write_files(self, response_text: str):
         try:
@@ -26,8 +28,9 @@ class SelfHealingEngine:
             log.error(f"⚠️ [Engine] Patch application failed: {e}")
             return {}
 
-    def _generate_contract(self, objective: str) -> str:
+    def _generate_contract(self, objective: str, repo_context: str) -> str:
         prompt = (
+            f"Based on this repository context:\n{repo_context}\n\n"
             f"Define ONLY the Python function signature(s) and type annotations required for this objective:\n"
             f"\"{objective}\"\n\n"
             f"Provide no implementation body—use '...' or 'pass'. Return pure Python signatures."
@@ -52,7 +55,7 @@ class SelfHealingEngine:
         memory_context = ""
         if similar_repairs:
             log.info(f"🧠 [Memory] Retrieved {len(similar_repairs)} similar historical fixes.")
-            memory_context = "PAST SUCCESSFUL REPAIRS FOR SIMILAR ERRORS:\n" + "\n".join(
+            memory_context = "PAST SUCCESSFUL REPAIRS:\n" + "\n".join(
                 [f"File: {r.get('file_path')}\nFix: {r.get('code_snapshot')}" for r in similar_repairs]
             )
 
@@ -63,7 +66,7 @@ class SelfHealingEngine:
 
             repair_prompt = (
                 f"{code_context}\n\n{memory_context}\n\n"
-                f"Test or Critic failure output:\n{current_error}\n\n"
+                f"Failure output:\n{current_error}\n\n"
                 f"Fix the code and test synchronization. Output ONLY repaired files using strict SEARCH/REPLACE format."
             )
 
@@ -81,15 +84,19 @@ class SelfHealingEngine:
         return success
 
     def run(self, prompt: str):
+        # 🚨 Phase 0: Explore the Workspace
+        repo_context = self.explorer.investigate(prompt)
+
         log.info("📐 [Engine] Generating interface contract...")
-        contract = self._generate_contract(prompt)
+        contract = self._generate_contract(prompt, repo_context)
 
         log.info("🔄 [Coder] Generating implementation from contract...")
         code_prompt = (
-            f"Implement the following feature conforming STRICTLY to this interface contract:\n{contract}\n\n"
+            f"Repository Context:\n{repo_context}\n\n"
+            f"Implement this feature conforming STRICTLY to the interface contract:\n{contract}\n\n"
             f"CRITICAL RULES:\n"
             f"1. Output using EXACTLY the SEARCH/REPLACE block format.\n"
-            f"2. Leave the '<<<< SEARCH' block empty since creating a new file, code in '==== REPLACE'.\n"
+            f"2. Leave '<<<< SEARCH' empty if creating a new file, otherwise use exact existing lines.\n"
             f"3. No conversational text. Feature:\n{prompt}"
         )
         code_response = self.llm.generate(code_prompt)
@@ -106,12 +113,13 @@ class SelfHealingEngine:
         log.info("🧪 [Coder] Writing contract-aligned test suite...")
         file_context = "\n".join([f"FILE: {k}\n{v}" for k, v in files.items()])
         test_prompt = (
+            f"Repository Context:\n{repo_context}\n\n"
             f"Write a pytest suite for these files conforming to this contract:\n{contract}\n\n"
             f"Files:\n{file_context}\n\n"
             f"CRITICAL RULES:\n"
             f"1. Output using the SEARCH/REPLACE block format.\n"
-            f"2. Leave '<<<< SEARCH' empty for new files.\n"
-            f"3. Save inside 'tests/' directory (e.g. FILE: tests/test_filename.py).\n"
+            f"2. Leave '<<<< SEARCH' empty if creating new test files.\n"
+            f"3. Save inside 'tests/' directory.\n"
             f"4. No conversational text."
         )
         test_response = self.llm.generate(test_prompt, slow=True)
