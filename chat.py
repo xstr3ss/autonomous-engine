@@ -13,19 +13,21 @@ URL_CHAT = "https://api.groq.com/openai/v1/chat/completions"
 
 def get_valid_model() -> str:
     if not groq_api_key:
-        return "openai/gpt-oss-20b"
+        return "llama-3.3-70b-versatile"
     try:
         headers = {"Authorization": f"Bearer {groq_api_key}"}
         resp = requests.get(URL_MODELS, headers=headers, timeout=10).json()
         models = [m["id"] for m in resp.get("data", [])]
-        valid_models = [m for m in models if "guard" not in m.lower() and "whisper" not in m.lower() and "vision" not in m.lower() and "canopylabs" not in m.lower()]
-        for target in ["gpt-oss-20b", "qwen3.8", "gpt-oss"]:
+        valid_models = [m for m in models if "guard" not in m.lower() and "whisper" not in m.lower() and "vision" not in m.lower()]
+
+        # Safely fall back to guaranteed models
+        for target in ["llama-3.3-70b", "llama-3.1-8b"]:
             for m in valid_models:
                 if target in m.lower():
                     return m
-        return valid_models[0] if valid_models else "openai/gpt-oss-20b"
+        return valid_models[0] if valid_models else "llama-3.3-70b-versatile"
     except Exception:
-        return "openai/gpt-oss-20b"
+        return "llama-3.3-70b-versatile"
 
 class AgenticOrchestrator:
     def __init__(self, model_name):
@@ -38,7 +40,7 @@ class AgenticOrchestrator:
         prompt = f"""Analyze input: "{user_input}"
 Determine if this requires file modifications, code execution, or project generation.
 Respond with exactly one word: ACTION or CHAT."""
-        
+
         headers = {"Authorization": f"Bearer {groq_api_key}", "Content-Type": "application/json"}
         payload = {
             "model": self.model,
@@ -73,19 +75,18 @@ Respond with exactly one word: ACTION or CHAT."""
 
 def run_chat():
     console.print("\n[bold yellow]⚡ Booting Fable OS...[/]")
-    
+
     console.print("[cyan]1. Discovering Groq API Models...[/]")
     ACTIVE_MODEL = get_valid_model()
-    
+    os.environ["FABLE_CLOUD_MODEL"] = ACTIVE_MODEL
+
     console.print("[cyan]2. Loading Autonomous Worker Engine (Qdrant & AST)...[/]")
     from engine import SelfHealingEngine
     from orchestrator import InstitutionalOrchestrator
-    
+
     engine = SelfHealingEngine()
     planner = InstitutionalOrchestrator(model_name=ACTIVE_MODEL)
     orchestrator = AgenticOrchestrator(model_name=ACTIVE_MODEL)
-    
-    # Removed the screen-clear bug so you can see your loading logs!
 
     console.print(Panel(
         f"[bold white]FABLE ENTERPRISE ORCHESTRATOR[/]\n"
@@ -110,7 +111,7 @@ def run_chat():
                 planner.display_plan(plan)
 
                 console.print("\n⚙️ [bold yellow]Dispatching Worker Engine...[/]")
-                engine.resolve_error(user_input)
+                engine.run(user_input)
                 orchestrator.memory.append({
                     "role": "system",
                     "content": f"System log: Executed task: '{user_input}'."

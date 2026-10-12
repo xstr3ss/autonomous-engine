@@ -1,13 +1,9 @@
-from password import validate_password
+import pytest
+from password import check_password_strength
 
-def test_valid_password():
-    assert validate_password("StrongPass1") == True
-
-def test_too_short():
-    assert validate_password("Short1a") == False
-
-def test_no_uppercase():
-    assert validate_password("lowercase1") == False
-
-def test_no_digit():
-    assert validate_password("NoDigitsHere") == False
+def test_check_password_strength():
+    assert check_password_strength("password") == "Weak"
+    assert check_password_strength("Password123!") == "Strong"
+    assert check_password_strength("123456") == "Weak"
+    assert check_password_strength("Password123") == "Medium"
+    assert check_password_strength("Password1234567890") == "Strong"

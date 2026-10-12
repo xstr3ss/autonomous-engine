@@ -12,7 +12,7 @@ console = Console()
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 class InstitutionalOrchestrator:
-    def __init__(self, model_name: str = "openai/gpt-oss-20b"):
+    def __init__(self, model_name: str = "llama-3.3-70b-versatile"):
         self.model = model_name
         self.api_url = "https://api.groq.com/openai/v1/chat/completions"
         self.headers = {

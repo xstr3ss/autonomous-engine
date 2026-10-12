@@ -305,10 +305,10 @@ class DiffEngine:
     def _replace_block(cls, content: str, search: str, replace: str) -> Optional[str]:
         if not search.strip():
             return None
-        if search in content:                                   # 1. exact
+        if search in content:                                           # 1. exact
             return content.replace(search, replace, 1)
         s, r = search.strip(), replace.strip()
-        if s in content:                                        # 2. ignoring outer whitespace
+        if s in content:                                                # 2. ignoring outer whitespace
             return content.replace(s, r, 1)
         return cls._fuzzy_replace(content, search, replace)     # 3. ignoring indentation
 

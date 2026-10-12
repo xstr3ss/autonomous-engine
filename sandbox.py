@@ -5,6 +5,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
+import subprocess
 
 _SIG_RE = re.compile(r"^(?:FAILED|ERROR) .*$", re.MULTILINE)
 _SUMMARY_RE = re.compile(r"\d+ (?:passed|failed|errors?|skipped|deselected|xfailed|xpassed)")
@@ -71,3 +72,23 @@ class TddReport:
     @property
     def ok(self) -> bool:
         return self.status in ("passed", "skipped")
+
+def run_tests(timeout: int = 30) -> tuple[bool, str]:
+    """Runs pytest in the workspace sandbox and returns (success, output)."""
+    workspace = Path.cwd()
+    try:
+        result = subprocess.run(
+            ["pytest"],
+            cwd=workspace,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            timeout=timeout,
+            env=sandbox_env(workspace)
+        )
+        pytest_res = PytestResult(returncode=result.returncode, output=result.stdout)
+        return pytest_res.passed, pytest_res.output
+    except subprocess.TimeoutExpired as e:
+        return False, f"Pytest timed out after {timeout} seconds.\n{e.output or ''}"
+    except Exception as e:
+        return False, f"Failed to run pytest: {str(e)}"

@@ -1,6 +1,7 @@
 from __future__ import annotations
 import logging
 import time
+import os
 from typing import Optional
 import requests
 from requests.adapters import HTTPAdapter
@@ -38,24 +39,38 @@ class LLMClient:
         return res.json().get("response", "")
 
     def get_cloud_response(self, prompt: str) -> str:
-        if not self.cfg.groq_api_key:
+        api_key = os.getenv("GROQ_API_KEY", self.cfg.groq_api_key)
+        if not api_key:
             raise RuntimeError("GROQ_API_KEY is not set")
+        
         headers = {
-            "Authorization": f"Bearer {self.cfg.groq_api_key}",
+            "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         }
+        
+        # FORCE synchronization with chat.py, bypassing the config cache
+        active_model = os.getenv("FABLE_CLOUD_MODEL", "llama-3.3-70b-versatile")
+        
         payload = {
-            "model": self.cfg.cloud_model,
+            "model": active_model,
             "messages": [{"role": "user", "content": prompt}],
-            "temperature": self.cfg.temperature,
+            "temperature": 0.2,
         }
-        res = self.session.post(self.cfg.cloud_url, headers=headers, json=payload, timeout=self.cfg.cloud_timeout)
-        res.raise_for_status()
+        
+        # HARDCODE exact URL string to prevent any hidden \r character bugs
+        cloud_url = "https://api.groq.com/openai/v1/chat/completions"
+        
+        res = self.session.post(cloud_url, headers=headers, json=payload, timeout=120)
+        
+        # Print the ACTUAL JSON error from Groq instead of failing silently
+        if res.status_code != 200:
+            log.error(f"❌ [Groq API Error] {res.text}")
+            res.raise_for_status()
+            
         return res.json()["choices"][0]["message"]["content"]
 
     def generate(self, prompt: str, force_cloud: bool = False, slow: bool = False) -> str:
-        """Local-first generation with retry, dead-server cooldown, and cloud fallback."""
-        skip_local = self.cfg.prefer_cloud or (force_cloud and bool(self.cfg.groq_api_key))
+        skip_local = self.cfg.prefer_cloud or (force_cloud and bool(os.getenv("GROQ_API_KEY", self.cfg.groq_api_key)))
         if not skip_local and time.monotonic() >= self._local_down_until:
             timeout = self.cfg.local_timeout * (3 if slow else 1)
             for attempt in range(1, self.cfg.local_retries + 1):
@@ -66,7 +81,7 @@ class LLMClient:
                         return text
                     log.warning("⚠️ [Local API] Empty response")
                 except (requests.ConnectionError, requests.Timeout) as e:
-                    log.warning("⚠️ [Local API] Unreachable (is Ollama '%s' running?): %s", self.cfg.local_model, e)
+                    log.warning("⚠️ [Local API] Unreachable (is Ollama running?): %s", self.cfg.local_model, e)
                     break
                 except requests.RequestException as e:
                     log.warning("⚠️ [Local API] Failed: %s", e)

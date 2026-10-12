@@ -19,7 +19,10 @@ class Config:
     local_url: str = field(default_factory=lambda: os.getenv("FABLE_LOCAL_URL", "http://localhost:11434/api/generate"))
     local_model: str = field(default_factory=lambda: os.getenv("FABLE_LOCAL_MODEL", "qwen2.5-coder:3b"))
     cloud_url: str = field(default_factory=lambda: os.getenv("FABLE_CLOUD_URL", "https://api.groq.com/openai/v1/chat/completions"))
-    cloud_model: str = field(default_factory=lambda: os.getenv("FABLE_CLOUD_MODEL", "openai/gpt-oss-20b"))
+
+    # Locked to a guaranteed active model
+    cloud_model: str = field(default_factory=lambda: os.getenv("FABLE_CLOUD_MODEL", "llama-3.3-70b-versatile"))
+
     temperature: float = 0.2
     local_timeout: int = field(default_factory=lambda: _env_int("FABLE_LOCAL_TIMEOUT", 180))
     cloud_timeout: int = 120
