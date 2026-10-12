@@ -4,7 +4,8 @@ import subprocess
 from config import Config
 from llm import LLMClient
 from parser import parse_file_blocks, extract_code
-from sandbox import run_tests
+from docker_sandbox import run_tests
+from memory import VectorMemory
 
 logging.basicConfig(level=logging.INFO, format="%(message)s", force=True)
 log = logging.getLogger("fable.engine")
@@ -14,6 +15,7 @@ class SelfHealingEngine:
         log.info("🚨 [Engine] Initializing Universal Agentic Engine...")
         self.cfg = Config()
         self.llm = LLMClient(self.cfg)
+        self.memory = VectorMemory()
         self.commit_on_fail = (os.getenv("FABLE_TDD_COMMIT_ON_FAIL", "0") == "1")
 
     def _write_files(self, response_text: str):
@@ -31,7 +33,6 @@ class SelfHealingEngine:
         return written
 
     def _generate_contract(self, objective: str) -> str:
-        """Forces an explicit interface contract before implementation."""
         contract_prompt = (
             f"Define ONLY the Python function signature(s) and type annotations required for this objective:\n"
             f"\"{objective}\"\n\n"
@@ -43,6 +44,14 @@ class SelfHealingEngine:
         log.info("🔧 [Engine] Resolving error via self-healing loop...")
         success, current_error = False, error_output
         retries = 0
+        
+        similar_repairs = self.memory.recall_similar_errors(current_error)
+        memory_context = ""
+        if similar_repairs:
+            log.info(f"🧠 [Memory] Retrieved {len(similar_repairs)} similar historical fixes.")
+            memory_context = "PAST SUCCESSFUL REPAIRS FOR SIMILAR ERRORS:\n" + "\n".join(
+                [f"File: {r.get('file_path')}\nFix: {r.get('code_snapshot')}" for r in similar_repairs]
+            )
 
         while not success and retries < 3:
             retries += 1
@@ -52,6 +61,7 @@ class SelfHealingEngine:
 
             repair_prompt = (
                 f"{code_context}\n\n"
+                f"{memory_context}\n\n"
                 f"Test failure output:\n{current_error}\n\n"
                 f"Fix the code and test synchronization. Output ONLY repaired files using 'FILE: filename.py'."
             )
@@ -62,6 +72,10 @@ class SelfHealingEngine:
 
             log.info(f"🧪 [TDD] Re-running {target_test}...")
             success, current_error = run_tests(test_target=target_test)
+
+        if success:
+            for filename, code in files_context.items():
+                self.memory.store_repair_context(current_error, code, filename)
 
         self._handle_git_commit(success=success)
         return success
@@ -74,7 +88,10 @@ class SelfHealingEngine:
         code_prompt = (
             f"Implement the following feature conforming STRICTLY to this interface contract:\n"
             f"{contract}\n\n"
-            f"Output using the exact format 'FILE: filename.py\\n```python\\n<code>\\n```'. Feature:\n{prompt}"
+            f"CRITICAL RULES:\n"
+            f"1. You MUST output using EXACTLY this format:\n"
+            f"FILE: filename.py\n```python\n<code>\n```\n"
+            f"2. DO NOT output any conversational text before or after. Start immediately with FILE:. Feature:\n{prompt}"
         )
         code_response = self.llm.generate(code_prompt)
         files = self._write_files(code_response)
@@ -85,6 +102,7 @@ class SelfHealingEngine:
             files = self._write_files(code_response)
             if not files:
                 log.error("🛑 [Engine] Fatal: Failed to generate source files.")
+                log.error(f"🔍 [DEBUG] RAW LLM OUTPUT THAT BROKE THE PARSER:\n{code_response}")
                 return
 
         log.info("🧪 [TDD] Writing contract-aligned test suite...")
@@ -92,7 +110,9 @@ class SelfHealingEngine:
         test_prompt = (
             f"Write a pytest suite for these files conforming to this contract:\n{contract}\n\n"
             f"Files:\n{file_context}\n\n"
-            f"Output format: 'FILE: tests/test_filename.py\\n```python\\n<code>\\n```'."
+            f"CRITICAL RULES:\n"
+            f"1. Output format: 'FILE: tests/test_filename.py\\n```python\\n<code>\\n```'.\n"
+            f"2. No conversational text."
         )
         test_response = self.llm.generate(test_prompt, slow=True)
         test_files = self._write_files(test_response)
@@ -101,6 +121,10 @@ class SelfHealingEngine:
             log.warning("⚠️ Escalating test generation to Cloud...")
             test_response = self.llm.generate(test_prompt, force_cloud=True, slow=True)
             test_files = self._write_files(test_response)
+            if not test_files:
+                log.error("🛑 [TDD] Fatal: Failed to generate test files.")
+                log.error(f"🔍 [DEBUG] RAW LLM OUTPUT THAT BROKE THE PARSER:\n{test_response}")
+                return
 
         target_test_file = next((f for f in test_files.keys() if f.startswith("tests/")), None)
         all_files = {**files, **test_files}
@@ -112,6 +136,10 @@ class SelfHealingEngine:
             return self.resolve_error(error_output, all_files, target_test_file)
 
         log.info("✅ [TDD] Green: All targeted tests passed!")
+        
+        for filename, code in all_files.items():
+            self.memory.store_repair_context("Initial TDD Run", code, filename)
+            
         self._handle_git_commit(success=True)
 
     def _handle_git_commit(self, success: bool):

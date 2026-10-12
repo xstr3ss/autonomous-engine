@@ -28,9 +28,16 @@ class LLMClient:
         self.session.mount("https://", adapter)
         
         self._cached_cloud_model = None
+        
+        # 🚨 THE FIX: Universal System Prompt
+        self.system_prompt = (
+            "You are Fable, an autonomous AI coding agent. "
+            "You MUST output all code using this exact rigid format:\n"
+            "FILE: filename.py\n```python\n<code>\n```\n"
+            "Never deviate from this format. Do not add conversational text."
+        )
 
     def _get_valid_groq_model(self, api_key: str) -> str:
-        """Dynamically fetches a valid model from Groq to prevent 404 errors."""
         if self._cached_cloud_model:
             return self._cached_cloud_model
             
@@ -40,10 +47,8 @@ class LLMClient:
             res = self.session.get("https://api.groq.com/openai/v1/models", headers=headers, timeout=10).json()
             models = [m["id"] for m in res.get("data", [])]
             
-            # Filter out audio/vision/guardrail models
             valid_models = [m for m in models if "guard" not in m.lower() and "whisper" not in m.lower() and "vision" not in m.lower()]
             
-            # Prioritize models we know write good code
             for target in ["llama-3.1", "qwen", "llama3"]:
                 for m in valid_models:
                     if target in m.lower():
@@ -58,17 +63,10 @@ class LLMClient:
             return "llama-3.1-8b-instant"
 
     def get_local_response(self, prompt: str, timeout: Optional[int] = None) -> str:
-        system_prompt = (
-            "You are Fable, an autonomous AI coding agent. "
-            "You MUST output all code using this exact rigid format:\n"
-            "FILE: filename.py\n```python\n<code>\n```\n"
-            "Never deviate from this format. Do not add conversational text."
-        )
-        
         payload = {
             "model": self.cfg.local_model,
             "prompt": prompt,
-            "system": system_prompt,
+            "system": self.system_prompt,
             "stream": False,
             "options": {"temperature": self.cfg.temperature},
         }
@@ -90,7 +88,11 @@ class LLMClient:
         
         payload = {
             "model": active_model,
-            "messages": [{"role": "user", "content": prompt}],
+            # 🚨 THE FIX: Injecting the system prompt into Groq
+            "messages": [
+                {"role": "system", "content": self.system_prompt},
+                {"role": "user", "content": prompt}
+            ],
             "temperature": 0.2,
         }
         
