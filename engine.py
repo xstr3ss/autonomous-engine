@@ -3,7 +3,7 @@ import logging
 import subprocess
 from config import Config
 from llm import LLMClient
-from parser import parse_file_blocks, extract_code
+from parser import apply_patch
 from docker_sandbox import run_tests
 from memory import VectorMemory
 
@@ -19,18 +19,11 @@ class SelfHealingEngine:
         self.commit_on_fail = (os.getenv("FABLE_TDD_COMMIT_ON_FAIL", "0") == "1")
 
     def _write_files(self, response_text: str):
-        blocks = parse_file_blocks(response_text)
-        written = {}
-        for file_path, body in blocks:
-            code = extract_code(body)
-            dir_name = os.path.dirname(file_path)
-            if dir_name:
-                os.makedirs(dir_name, exist_ok=True)
-            with open(file_path, "w", encoding="utf-8") as f:
-                f.write(code)
-            written[file_path] = code
-            log.info(f"✅ [Engine] Updated {file_path}")
-        return written
+        try:
+            return apply_patch(response_text)
+        except Exception as e:
+            log.error(f"⚠️ [Engine] Patch application failed: {e}")
+            return {}
 
     def _generate_contract(self, objective: str) -> str:
         contract_prompt = (
@@ -59,11 +52,12 @@ class SelfHealingEngine:
 
             code_context = "Current Files:\n" + "\n".join([f"FILE: {k}\n{v}" for k, v in files_context.items()])
 
+            # 🚨 THE FIX: Teach the repair loop to use surgical diffs
             repair_prompt = (
                 f"{code_context}\n\n"
                 f"{memory_context}\n\n"
                 f"Test failure output:\n{current_error}\n\n"
-                f"Fix the code and test synchronization. Output ONLY repaired files using 'FILE: filename.py'."
+                f"Fix the code and test synchronization. Output ONLY repaired files using the strict SEARCH/REPLACE format."
             )
 
             repair_response = self.llm.generate(repair_prompt, force_cloud=True, slow=True)
@@ -85,13 +79,14 @@ class SelfHealingEngine:
         contract = self._generate_contract(prompt)
 
         log.info("🔄 [Agent Loop] Generating implementation from contract...")
+        # 🚨 THE FIX: Teach the initial generation loop to use surgical diffs
         code_prompt = (
             f"Implement the following feature conforming STRICTLY to this interface contract:\n"
             f"{contract}\n\n"
             f"CRITICAL RULES:\n"
-            f"1. You MUST output using EXACTLY this format:\n"
-            f"FILE: filename.py\n```python\n<code>\n```\n"
-            f"2. DO NOT output any conversational text before or after. Start immediately with FILE:. Feature:\n{prompt}"
+            f"1. You MUST output using EXACTLY the SEARCH/REPLACE block format defined in your system prompt.\n"
+            f"2. Since you are creating new files, leave the '<<<< SEARCH' block empty, and put the new code in '==== REPLACE'.\n"
+            f"3. DO NOT output any conversational text. Feature:\n{prompt}"
         )
         code_response = self.llm.generate(code_prompt)
         files = self._write_files(code_response)
@@ -107,12 +102,15 @@ class SelfHealingEngine:
 
         log.info("🧪 [TDD] Writing contract-aligned test suite...")
         file_context = "\n".join([f"FILE: {k}\n{v}" for k, v in files.items()])
+        
+        # 🚨 THE FIX: Teach the test generation loop to use surgical diffs
         test_prompt = (
             f"Write a pytest suite for these files conforming to this contract:\n{contract}\n\n"
             f"Files:\n{file_context}\n\n"
             f"CRITICAL RULES:\n"
-            f"1. Output format: 'FILE: tests/test_filename.py\\n```python\\n<code>\\n```'.\n"
-            f"2. No conversational text."
+            f"1. Output using the SEARCH/REPLACE block format.\n"
+            f"2. Leave the '<<<< SEARCH' block empty since you are creating a new test file.\n"
+            f"3. No conversational text."
         )
         test_response = self.llm.generate(test_prompt, slow=True)
         test_files = self._write_files(test_response)

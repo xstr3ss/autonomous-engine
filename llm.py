@@ -29,12 +29,18 @@ class LLMClient:
         
         self._cached_cloud_model = None
         
-        # 🚨 THE FIX: Universal System Prompt
+        # 🚨 THE FIX: Advanced Diff Engine System Prompt
         self.system_prompt = (
             "You are Fable, an autonomous AI coding agent. "
-            "You MUST output all code using this exact rigid format:\n"
-            "FILE: filename.py\n```python\n<code>\n```\n"
-            "Never deviate from this format. Do not add conversational text."
+            "You MUST output code modifications using surgical SEARCH/REPLACE blocks.\n"
+            "Format exactly like this:\n"
+            "FILE: filename.py\n"
+            "<<<< SEARCH\n"
+            "Exact lines to replace (leave blank if creating a new file)\n"
+            "==== REPLACE\n"
+            "New lines of code\n"
+            ">>>>\n\n"
+            "Never deviate from this format. No conversational text."
         )
 
     def _get_valid_groq_model(self, api_key: str) -> str:
