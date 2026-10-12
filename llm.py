@@ -20,17 +20,55 @@ class LLMClient:
             total=2,
             backoff_factor=0.5,
             status_forcelist=(429, 500, 502, 503, 504),
-            allowed_methods=frozenset({"POST"}),
+            allowed_methods=frozenset({"POST", "GET"}),
             respect_retry_after_header=True,
         )
         adapter = HTTPAdapter(max_retries=retry, pool_connections=4, pool_maxsize=8)
         self.session.mount("http://", adapter)
         self.session.mount("https://", adapter)
+        
+        self._cached_cloud_model = None
+
+    def _get_valid_groq_model(self, api_key: str) -> str:
+        """Dynamically fetches a valid model from Groq to prevent 404 errors."""
+        if self._cached_cloud_model:
+            return self._cached_cloud_model
+            
+        log.info("🔍 [LLM] Auto-discovering available Groq models...")
+        try:
+            headers = {"Authorization": f"Bearer {api_key}"}
+            res = self.session.get("https://api.groq.com/openai/v1/models", headers=headers, timeout=10).json()
+            models = [m["id"] for m in res.get("data", [])]
+            
+            # Filter out audio/vision/guardrail models
+            valid_models = [m for m in models if "guard" not in m.lower() and "whisper" not in m.lower() and "vision" not in m.lower()]
+            
+            # Prioritize models we know write good code
+            for target in ["llama-3.1", "qwen", "llama3"]:
+                for m in valid_models:
+                    if target in m.lower():
+                        self._cached_cloud_model = m
+                        log.info(f"🎯 [LLM] Selected Groq model: {m}")
+                        return m
+                        
+            self._cached_cloud_model = valid_models[0]
+            return valid_models[0]
+        except Exception as e:
+            log.warning(f"⚠️ [LLM] Model discovery failed, falling back to llama-3.1-8b-instant. Error: {e}")
+            return "llama-3.1-8b-instant"
 
     def get_local_response(self, prompt: str, timeout: Optional[int] = None) -> str:
+        system_prompt = (
+            "You are Fable, an autonomous AI coding agent. "
+            "You MUST output all code using this exact rigid format:\n"
+            "FILE: filename.py\n```python\n<code>\n```\n"
+            "Never deviate from this format. Do not add conversational text."
+        )
+        
         payload = {
             "model": self.cfg.local_model,
             "prompt": prompt,
+            "system": system_prompt,
             "stream": False,
             "options": {"temperature": self.cfg.temperature},
         }
@@ -43,13 +81,12 @@ class LLMClient:
         if not api_key:
             raise RuntimeError("GROQ_API_KEY is not set")
         
+        active_model = self._get_valid_groq_model(api_key)
+        
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         }
-        
-        # FORCE synchronization with chat.py, bypassing the config cache
-        active_model = os.getenv("FABLE_CLOUD_MODEL", "llama-3.3-70b-versatile")
         
         payload = {
             "model": active_model,
@@ -57,12 +94,10 @@ class LLMClient:
             "temperature": 0.2,
         }
         
-        # HARDCODE exact URL string to prevent any hidden \r character bugs
         cloud_url = "https://api.groq.com/openai/v1/chat/completions"
         
         res = self.session.post(cloud_url, headers=headers, json=payload, timeout=120)
         
-        # Print the ACTUAL JSON error from Groq instead of failing silently
         if res.status_code != 200:
             log.error(f"❌ [Groq API Error] {res.text}")
             res.raise_for_status()
