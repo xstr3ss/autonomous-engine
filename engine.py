@@ -1,3 +1,4 @@
+from distiller import DistillationEngine
 import logging
 from config import Config
 from llm import LLMClient
@@ -19,8 +20,8 @@ class SelfHealingEngine:
         self.memory = VectorMemory()
         self.critic = CriticAgent(self.llm)
         self.git = GitManager()
-        self.explorer = WorkspaceExplorer(self.llm)  # 🚨 NEW
-
+        self.explorer = WorkspaceExplorer(self.llm) 
+        self.distiller = DistillationEngine() # 🚨 NEW
     def _write_files(self, response_text: str):
         try:
             return apply_patch(response_text)
@@ -77,6 +78,9 @@ class SelfHealingEngine:
             success, current_error = self._execute_with_critic(contract, files_context, target_test)
 
         if success:
+            # 🚨 NEW: Distill the successful self-healing repair
+            self.distiller.save_golden_record(repair_prompt, repair_response)
+            
             for filename, code in files_context.items():
                 self.memory.store_repair_context(current_error, code, filename)
 
@@ -142,6 +146,12 @@ class SelfHealingEngine:
             return self.resolve_error(error_output, all_files, target_test_file, contract)
 
         log.info("✅ [TDD] Green: All targeted tests passed!")
+        
+        # 🚨 NEW: Distill the knowledge from this successful run
+        golden_instruction = f"Repository Context:\n{repo_context}\n\nFeature:\n{prompt}"
+        golden_response = test_response if "==== REPLACE" in test_response else code_response
+        self.distiller.save_golden_record(golden_instruction, golden_response)
+        
         for filename, code in all_files.items():
             self.memory.store_repair_context("Initial TDD Run", code, filename)
             
