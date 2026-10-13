@@ -1,6 +1,8 @@
 import os
 import logging
 import requests
+import subprocess
+import time
 from typing import List, Dict, Any
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import Distance, VectorParams, PointStruct
@@ -12,12 +14,23 @@ class VectorMemory:
     def __init__(self, collection_name: str = "fable_ast_memory"):
         self.collection_name = collection_name
         self.qdrant_url = os.getenv("QDRANT_URL", "http://localhost:6333")
-        self.client = QdrantClient(url=self.qdrant_url)
         
+        self._ensure_qdrant_running()
+        
+        self.client = QdrantClient(url=self.qdrant_url)
         self.ollama_url = os.getenv("OLLAMA_EMBED_URL", "http://localhost:11434/api/embeddings")
         self.embed_model = os.getenv("EMBED_MODEL", "nomic-embed-text") 
         
         self._ensure_collection()
+
+    def _ensure_qdrant_running(self):
+        """Pings Qdrant and forcibly starts the Docker container if offline."""
+        try:
+            requests.get(self.qdrant_url, timeout=2)
+        except requests.ConnectionError:
+            log.warning("⚠️ [Memory] Qdrant is offline. Auto-starting Docker container...")
+            subprocess.run(["docker", "start", "fable_qdrant"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            time.sleep(3) # Give the database 3 seconds to spin up
 
     def _ensure_collection(self):
         if not self.client.collection_exists(self.collection_name):
@@ -66,7 +79,6 @@ class VectorMemory:
         if not vector:
             return []
 
-        # Use the modern query_points API
         results = self.client.query_points(
             collection_name=self.collection_name,
             query=vector,
