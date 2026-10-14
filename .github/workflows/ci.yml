@@ -1,0 +1,23 @@
+name: Fable CI Pipeline
+
+on:
+  push:
+    branches-ignore:
+      - 'fable-fix-**'
+      - 'fable-autofix-**'
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Run Unit Tests
+        run: python3 -m unittest discover -s . -p "test_ci_target.py"
